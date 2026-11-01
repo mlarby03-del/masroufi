@@ -1,0 +1,823 @@
+name: Build APK
+
+# ملف واحد: يصنع كل ملفات تطبيق مصروفي ثم يبني الـ APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create settings.gradle
+        run: |
+          mkdir -p "$(dirname 'settings.gradle')"
+          cat > 'settings.gradle' <<'__MASROUF_EOF__'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Masrouf"
+          include ':app'
+          __MASROUF_EOF__
+      - name: Create build.gradle
+        run: |
+          mkdir -p "$(dirname 'build.gradle')"
+          cat > 'build.gradle' <<'__MASROUF_EOF__'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          __MASROUF_EOF__
+      - name: Create gradle.properties
+        run: |
+          mkdir -p "$(dirname 'gradle.properties')"
+          cat > 'gradle.properties' <<'__MASROUF_EOF__'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          __MASROUF_EOF__
+      - name: Create build.gradle
+        run: |
+          mkdir -p "$(dirname 'app/build.gradle')"
+          cat > 'app/build.gradle' <<'__MASROUF_EOF__'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.mohamed.masrouf'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.mohamed.masrouf"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          __MASROUF_EOF__
+      - name: Create AndroidManifest.xml
+        run: |
+          mkdir -p "$(dirname 'app/src/main/AndroidManifest.xml')"
+          cat > 'app/src/main/AndroidManifest.xml' <<'__MASROUF_EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <application
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:allowBackup="true"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <receiver android:name=".ReminderReceiver" android:exported="false" />
+                  <receiver android:name=".BootReceiver" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                      </intent-filter>
+                  </receiver>
+              </application>
+          </manifest>
+          __MASROUF_EOF__
+      - name: Create strings.xml
+        run: |
+          mkdir -p "$(dirname 'app/src/main/res/values/strings.xml')"
+          cat > 'app/src/main/res/values/strings.xml' <<'__MASROUF_EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">مصروفي</string>
+          </resources>
+          __MASROUF_EOF__
+      - name: Create MainActivity.java
+        run: |
+          mkdir -p "$(dirname 'app/src/main/java/com/mohamed/masrouf/MainActivity.java')"
+          cat > 'app/src/main/java/com/mohamed/masrouf/MainActivity.java' <<'__MASROUF_EOF__'
+          package com.mohamed.masrouf;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.view.Window;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import org.json.JSONObject;
+
+          public class MainActivity extends Activity {
+              private WebView web;
+
+              public class Bridge {
+                  @JavascriptInterface
+                  public void sync(String json) {
+                      try {
+                          JSONObject o = new JSONObject(json);
+                          int hour = o.optInt("hour", 9);
+                          SharedPreferences sp = getSharedPreferences("shop", Context.MODE_PRIVATE);
+                          sp.edit().putString("items", o.getJSONArray("items").toString()).putInt("hour", hour).apply();
+                          Scheduler.schedule(MainActivity.this, hour);
+                      } catch (Exception e) {
+                          // ignore
+                      }
+                  }
+              }
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  Window w = getWindow();
+                  w.setStatusBarColor(Color.parseColor("#0f766e"));
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+                  }
+                  web = new WebView(this);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  web.addJavascriptInterface(new Bridge(), "Android");
+                  web.setWebViewClient(new WebViewClient());
+                  setContentView(web);
+                  web.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  web.evaluateJavascript("window.handleBack && window.handleBack()", value -> {
+                      if (!"true".equals(value)) {
+                          MainActivity.super.onBackPressed();
+                      }
+                  });
+              }
+          }
+          __MASROUF_EOF__
+      - name: Create Scheduler.java
+        run: |
+          mkdir -p "$(dirname 'app/src/main/java/com/mohamed/masrouf/Scheduler.java')"
+          cat > 'app/src/main/java/com/mohamed/masrouf/Scheduler.java' <<'__MASROUF_EOF__'
+          package com.mohamed.masrouf;
+
+          import android.app.AlarmManager;
+          import android.app.PendingIntent;
+          import android.content.Context;
+          import android.content.Intent;
+          import java.util.Calendar;
+
+          public class Scheduler {
+              public static void schedule(Context c, int hour) {
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  Intent i = new Intent(c, ReminderReceiver.class);
+                  PendingIntent pi = PendingIntent.getBroadcast(c, 1, i,
+                          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                  Calendar t = Calendar.getInstance();
+                  t.set(Calendar.HOUR_OF_DAY, hour);
+                  t.set(Calendar.MINUTE, 0);
+                  t.set(Calendar.SECOND, 0);
+                  if (t.getTimeInMillis() <= System.currentTimeMillis()) t.add(Calendar.DAY_OF_YEAR, 1);
+                  am.cancel(pi);
+                  am.setInexactRepeating(AlarmManager.RTC_WAKEUP, t.getTimeInMillis(), AlarmManager.INTERVAL_DAY, pi);
+              }
+          }
+          __MASROUF_EOF__
+      - name: Create ReminderReceiver.java
+        run: |
+          mkdir -p "$(dirname 'app/src/main/java/com/mohamed/masrouf/ReminderReceiver.java')"
+          cat > 'app/src/main/java/com/mohamed/masrouf/ReminderReceiver.java' <<'__MASROUF_EOF__'
+          package com.mohamed.masrouf;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.os.Build;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          public class ReminderReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(Context c, Intent intent) {
+                  try {
+                      SharedPreferences sp = c.getSharedPreferences("shop", Context.MODE_PRIVATE);
+                      JSONArray arr = new JSONArray(sp.getString("items", "[]"));
+                      long now = System.currentTimeMillis();
+                      StringBuilder sb = new StringBuilder();
+                      int n = 0;
+                      for (int i = 0; i < arr.length(); i++) {
+                          JSONObject o = arr.getJSONObject(i);
+                          if (o.getLong("d") <= now) {
+                              if (n > 0) sb.append("، ");
+                              sb.append(o.getString("n"));
+                              n++;
+                          }
+                      }
+                      if (n == 0) return;
+                      NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                      if (Build.VERSION.SDK_INT >= 26) {
+                          nm.createNotificationChannel(new NotificationChannel("shop", "تذكير المشتريات", NotificationManager.IMPORTANCE_DEFAULT));
+                      }
+                      PendingIntent pi = PendingIntent.getActivity(c, 0, new Intent(c, MainActivity.class),
+                              PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                      Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                              ? new Notification.Builder(c, "shop") : new Notification.Builder(c);
+                      b.setSmallIcon(android.R.drawable.ic_dialog_info)
+                              .setContentTitle("🛒 وقت المشتريات")
+                              .setContentText(sb.toString())
+                              .setStyle(new Notification.BigTextStyle().bigText("لازمك تشري: " + sb))
+                              .setContentIntent(pi)
+                              .setAutoCancel(true);
+                      nm.notify(1, b.build());
+                  } catch (Exception e) {
+                      // ignore
+                  }
+              }
+          }
+          __MASROUF_EOF__
+      - name: Create BootReceiver.java
+        run: |
+          mkdir -p "$(dirname 'app/src/main/java/com/mohamed/masrouf/BootReceiver.java')"
+          cat > 'app/src/main/java/com/mohamed/masrouf/BootReceiver.java' <<'__MASROUF_EOF__'
+          package com.mohamed.masrouf;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          public class BootReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(Context c, Intent intent) {
+                  int hour = c.getSharedPreferences("shop", Context.MODE_PRIVATE).getInt("hour", 9);
+                  Scheduler.schedule(c, hour);
+              }
+          }
+          __MASROUF_EOF__
+      - name: Create index.html
+        run: |
+          mkdir -p "$(dirname 'app/src/main/assets/index.html')"
+          cat > 'app/src/main/assets/index.html' <<'__MASROUF_EOF__'
+          <!doctype html>
+          <html lang="ar" dir="rtl">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+          <title>مصروفي</title>
+          <style>
+          :root{
+            --bg:#f4f6f5; --card:#fff; --ink:#14201e; --muted:#6b7a77; --line:#e2e8e6;
+            --inc:#00c46a; --inc-d:#009a52; --main:#0f766e; --main-d:#0b5a54; --ok:#16a34a; --warn:#d97706; --bad:#dc2626;
+          }
+          *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+          html,body{margin:0;height:100%}
+          body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:16px}
+          #app{display:flex;flex-direction:column;height:100%}
+          header{background:var(--main);color:#fff;padding:12px 14px 14px}
+          .monthbar{display:flex;align-items:center;justify-content:space-between}
+          .monthbar button{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:10px;width:40px;height:40px;font-size:20px}
+          .monthbar .m{font-size:18px;font-weight:700}
+          main{flex:1;overflow-y:auto;padding:14px 14px 90px}
+          nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid var(--line)}
+          nav button{flex:1;border:0;background:none;padding:12px 4px;font-size:14px;color:var(--muted);font-weight:600}
+          nav button.on{color:var(--main);box-shadow:inset 0 3px 0 var(--main)}
+          .card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+          .big{font-size:34px;font-weight:800;margin:2px 0}
+          .lbl{color:var(--muted);font-size:13px}
+          .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+          .bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden;margin:10px 0 6px}
+          .bar>i{display:block;height:100%;border-radius:6px;background:var(--ok);transition:width .3s}
+          .alert{border-radius:12px;padding:12px 14px;margin-bottom:14px;font-weight:600;font-size:14px}
+          .alert.warn{background:#fef3c7;color:#92400e}
+          .alert.bad{background:#fee2e2;color:#991b1b}
+          .alert.good{background:#dcfce7;color:#166534}
+          h3{margin:4px 0 12px;font-size:16px}
+          label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+          input,select{width:100%;padding:12px;border:1px solid var(--line);border-radius:12px;font-size:16px;background:#fff;color:var(--ink);font-family:inherit}
+          .btn{width:100%;background:var(--main);color:#fff;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:700;margin-top:14px}
+          .btn:active{background:var(--main-d)}
+          .btn.sec{background:#e6efed;color:var(--main-d)}
+          .exp{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+          .exp:last-child{border:0}
+          .dot{width:38px;height:38px;border-radius:12px;background:#e6efed;display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+          .exp .t{flex:1;min-width:0}
+          .exp .t b{display:block}
+          .exp .t span{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+          .amt{font-weight:700;white-space:nowrap}
+          .del{background:none;border:0;color:var(--bad);font-size:18px;padding:6px}
+          .empty{text-align:center;color:var(--muted);padding:28px 8px}
+          .cat{margin-bottom:14px}
+          .cat .row b{font-size:15px}
+          .small{font-size:12px;color:var(--muted)}
+          .fab{position:fixed;bottom:70px;left:16px;width:58px;height:58px;border-radius:50%;background:var(--main);color:#fff;border:0;font-size:32px;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+          .sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;z-index:5}
+          .sheet.show{display:flex}
+          .sheet .in{background:#fff;width:100%;border-radius:20px 20px 0 0;padding:18px 16px 24px;max-height:92%;overflow-y:auto}
+          .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+          .g{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 8px;margin-bottom:14px}
+          .gi{text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px}
+          .gi .nm{font-size:13px;font-weight:600;min-height:18px}
+          .ci{width:68px;height:68px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:30px;border:3px solid transparent}
+          .ci.late{border-color:var(--bad)}
+          .ci.add{border:2px dashed var(--muted);color:var(--muted);background:none;font-size:34px}
+          .gi .st{font-size:12px;color:var(--muted)}
+          .gi .st.due{color:var(--bad);font-weight:700}
+          .gi .fq{font-size:11px;color:var(--muted);margin-top:-4px}
+          .sum{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+          .sum .c{border-radius:16px;padding:14px 12px}
+          .sum .c .l{font-size:13px;font-weight:700;opacity:.95}
+          .sum .c .v{font-size:21px;font-weight:800;margin-top:4px;white-space:nowrap}
+          .sum .sin{background:linear-gradient(135deg,#00ea7e,#00b85c 55%,#008f47);color:#fff;box-shadow:0 6px 18px rgba(0,196,106,.4)}
+          .sum .sout{background:#fff;color:var(--ink);border:1px solid var(--line)}
+          .sum .sout .v{color:#be123c}
+          .exp.inc{background:linear-gradient(270deg,rgba(0,196,106,.14),rgba(0,196,106,0));border-radius:12px;padding:10px 8px;margin:2px -8px;border-bottom:0}
+          .exp.inc .dot{background:linear-gradient(135deg,#00ea7e,#009a52);color:#fff}
+          .exp.inc .amt{color:var(--inc-d);font-size:17px}
+          .incbox{border:1.5px solid rgba(0,196,106,.45);background:linear-gradient(180deg,#f0fff7,#fff)}
+          .incbox h3{color:var(--inc-d)}
+          .bar.g>i{background:linear-gradient(90deg,#00ea7e,#00b85c)}
+          .pills{position:fixed;bottom:66px;left:12px;display:flex;gap:8px;z-index:3}
+          .pill{border:0;border-radius:26px;padding:13px 18px;font-weight:800;font-size:15px;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.28);font-family:inherit}
+          .pill.pg{background:linear-gradient(135deg,#00ea7e,#009a52)}
+          .pill.pr{background:#334155}
+          .btn.inc{background:linear-gradient(135deg,#00ea7e,#009a52)}
+          .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+          .chip{background:#e7fbf0;color:var(--inc-d);border-radius:16px;padding:6px 12px;font-size:13px;font-weight:700}
+          .mrow{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+          .mrow:last-child{border:0}
+          .carry{background:#f1f5f9;border-radius:12px;padding:10px 14px;margin:-4px 0 14px;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+          .pos{color:var(--inc-d);font-weight:800}
+          .neg{color:#be123c;font-weight:700}
+          </style>
+          </head>
+          <body>
+          <div id="app">
+            <header>
+              <div class="monthbar">
+                <button onclick="shift(1)" aria-label="الشهر الجاي">›</button>
+                <div class="m" id="mlabel"></div>
+                <button onclick="shift(-1)" aria-label="الشهر اللي فات">‹</button>
+              </div>
+            </header>
+            <main id="view"></main>
+            <div class="pills" id="fab"><button class="pill pg" onclick="openAdd('i')">＋ مدخول</button><button class="pill pr" onclick="openAdd('e')">－ مصروف</button></div>
+            <nav>
+              <button data-t="home" class="on" onclick="tab('home')">🏠 الرئيسية</button>
+              <button data-t="list" onclick="tab('list')">🧾 العمليات</button>
+              <button data-t="shop" onclick="tab('shop')">🛒 المشتريات</button>
+              <button data-t="budget" onclick="tab('budget')">🎯 الميزانية</button>
+            </nav>
+          </div>
+
+          <div class="sheet" id="sheet" onclick="if(event.target===this)closeSheet()">
+            <div class="in" id="sheetin"></div>
+          </div>
+
+          <script src="data1money.js"></script>
+          <script>
+          var CATS=[
+           {id:'food',n:'الماكلة (عامة)',i:'🍞'},
+           {id:'transport',n:'النقل',i:'🚌'},
+           {id:'bills',n:'الفواتير',i:'💡'},
+           {id:'rent',n:'الكراء',i:'🏠'},
+           {id:'health',n:'الصحة',i:'💊'},
+           {id:'edu',n:'الدراسة والأولاد',i:'📚'},
+           {id:'fun',n:'ترفيه وخرجات',i:'🎉'},
+           {id:'veg',n:'خضر',i:'🥬'},
+           {id:'meat',n:'لحوم',i:'🥩'},
+           {id:'fruit',n:'فواكه',i:'🍎'},
+           {id:'nuts',n:'مكسرات',i:'🥜'},
+           {id:'cheese',n:'جبن وفرامج',i:'🧀'},
+           {id:'tea',n:'شاي',i:'🍵'},
+           {id:'car',n:'صيانة السيارة',i:'🔧'},
+           {id:'clean',n:'منظفات',i:'🧴'},
+           {id:'other',n:'أخرى',i:'📦'}
+          ];
+          var MONTHS=['جانفي','فيفري','مارس','أفريل','ماي','جوان','جويلية','أوت','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+          var KEY='masrouf_v1';
+          var S=load();
+          var cur=new Date(); cur=new Date(cur.getFullYear(),cur.getMonth(),1);
+          var curTab='home';
+
+          function load(){try{var d=JSON.parse(localStorage.getItem(KEY));if(d&&d.months)return d}catch(e){}return{months:{}}}
+          function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+          function mk(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+          function getM(key){
+            if(!S.months[key]){
+              var prev=Object.keys(S.months).filter(function(k){return k<key}).sort().pop();
+              var m={salary:0,budgets:{},expenses:[],incomes:[]};
+              if(prev){m.salary=S.months[prev].salary;m.budgets=JSON.parse(JSON.stringify(S.months[prev].budgets))}
+              S.months[key]=m;
+            }
+            return S.months[key];
+          }
+          function fmt(n){return Math.round(n).toLocaleString('fr-FR').replace(/ | /g,' ')+' دج'}
+          function esc(s){return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+          function incList(m){return m.incomes||(m.incomes=[])}
+          function incSum(m){return incList(m).reduce(function(a,e){return a+e.amount},0)}
+          function income(m){return (m.salary||0)+incSum(m)}
+          function total(m){return m.expenses.reduce(function(a,e){return a+e.amount},0)}
+          function catSpent(m,id){return m.expenses.filter(function(e){return e.cat===id}).reduce(function(a,e){return a+e.amount},0)}
+          function catOf(id){return CATS.filter(function(c){return c.id===id})[0]||CATS[CATS.length-1]}
+          function color(p){return p>=100?'var(--bad)':p>=80?'var(--warn)':'var(--ok)'}
+
+          function shift(d){cur=new Date(cur.getFullYear(),cur.getMonth()+d,1);render()}
+          function tab(t){
+            curTab=t;
+            document.querySelectorAll('nav button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});
+            document.getElementById('fab').style.display=(t==='home'||t==='list')?'flex':'none';
+            render();
+          }
+
+          function render(){
+            var key=mk(cur),m=getM(key);
+            document.getElementById('mlabel').textContent=MONTHS[cur.getMonth()]+' '+cur.getFullYear();
+            var v=document.getElementById('view');
+            v.innerHTML= curTab==='home'?home(m,key): curTab==='list'?list(m): curTab==='shop'?shop(): budget(m);
+            var nd=dueItems().length;
+            document.querySelector('nav [data-t=shop]').textContent='🛒 المشتريات'+(nd?' ('+nd+')':'');
+            v.scrollTop=0;
+          }
+
+          function carry(key){var c=0;Object.keys(S.months).forEach(function(k){if(k<key){var m=S.months[k];c+=income(m)-total(m)}});return c}
+          function sumCards(m,key){
+            return '<div class="sum"><div class="c sin"><div class="l">⬇️ دخلت</div><div class="v">+'+fmt(income(m))+'</div></div>'
+             +'<div class="c sout"><div class="l">⬆️ خرجت</div><div class="v">−'+fmt(total(m))+'</div></div></div>'
+             +carryRow(key);
+          }
+          function carryRow(key){
+            var c=carry(key);
+            if(Math.round(c)===0)return '';
+            return '<div class="carry"><span>↪️ منقول من الشهور اللي فاتت</span><b class="'+(c>0?'pos':'neg')+'">'+(c>0?'+':'−')+fmt(Math.abs(c))+'</b></div>';
+          }
+          function sourcesCard(m){
+            var map={};
+            if(m.salary>0)map['راتب ثابت']=m.salary;
+            incList(m).forEach(function(x){var s=x.source||'مدخول';map[s]=(map[s]||0)+x.amount});
+            var ks=Object.keys(map).sort(function(a,b){return map[b]-map[a]});
+            if(!ks.length)return '';
+            var tot=income(m),h='<div class="card incbox"><h3>💚 من وين جاك المدخول</h3>';
+            ks.forEach(function(k){
+              h+='<div class="cat"><div class="row"><b>'+esc(k)+'</b><span class="pos">+'+fmt(map[k])+'</span></div>'
+               +'<div class="bar g" style="margin:6px 0 0"><i style="width:'+Math.min(100,map[k]/tot*100)+'%"></i></div></div>';
+            });
+            return h+'</div>';
+          }
+          function monthsCard(){
+            var ks=Object.keys(S.months).sort().reverse().filter(function(k){var m=S.months[k];return income(m)>0||total(m)>0});
+            if(ks.length<2)return '';
+            var run=0,close={};
+            Object.keys(S.months).sort().forEach(function(k){var mm=S.months[k];run+=income(mm)-total(mm);close[k]=run});
+            var h='<div class="card"><h3>📅 كل الشهور</h3>';
+            ks.forEach(function(k){
+              var m=S.months[k],p=k.split('-'),cl=close[k];
+              h+='<div class="mrow" onclick="goMonth(\''+k+'\')"><div><b>'+MONTHS[+p[1]-1]+' '+p[0]+'</b><div class="small">الرصيد آخر الشهر: <b class="'+(cl>=0?'pos':'neg')+'">'+(cl<0?'−':'')+fmt(Math.abs(cl))+'</b></div></div><span><span class="pos">+'+fmt(income(m))+'</span> · <span class="neg">−'+fmt(total(m))+'</span></span></div>';
+            });
+            return h+'</div>';
+          }
+          function goMonth(k){var p=k.split('-');cur=new Date(+p[0],+p[1]-1,1);tab('home')}
+
+          function home(m,key){
+            var spent=total(m),cr=carry(key),sal=income(m)+cr,left=sal-spent,p=sal>0?spent/sal*100:(spent>0?100:0),h=sumCards(m,key);
+            if(!sal){
+              h+='<div class="alert warn">سجل مدخولك بزر «＋ مدخول» باش يبدا الحساب.</div>';
+            }else if(left<0){
+              h+='<div class="alert bad">⚠️ خرجت أكثر من المتوفر بـ '+fmt(-left)+'</div>';
+            }else if(p>=80){
+              h+='<div class="alert warn">⚠️ خرجت '+Math.round(p)+'% من المتوفر، بقاولك غير '+fmt(left)+'</div>';
+            }else{
+              h+='<div class="alert good">✅ راك ماشي مليح، خرجت '+Math.round(p)+'% من المتوفر</div>';
+            }
+            var over=CATS.filter(function(c){var b=m.budgets[c.id]||0;return b>0&&catSpent(m,c.id)>b});
+            over.forEach(function(c){h+='<div class="alert bad">🚨 فتّ ميزانية «'+c.n+'» بـ '+fmt(catSpent(m,c.id)-m.budgets[c.id])+'</div>'});
+            var near=CATS.filter(function(c){var b=m.budgets[c.id]||0,s=catSpent(m,c.id);return b>0&&s<=b&&s/b>=.8});
+            near.forEach(function(c){h+='<div class="alert warn">قربت تكمل ميزانية «'+c.n+'» ('+fmt(m.budgets[c.id]-catSpent(m,c.id))+' باقيين)</div>'});
+
+            var di=dueItems();
+            if(di.length)h+='<div class="alert warn" onclick="tab(\'shop\')">🛒 لازمك تشري: '+di.map(function(i){return esc(i.name)}).join('، ')+'</div>';
+            h+='<div class="card"><div class="lbl">الباقي</div><div class="big" style="color:'+(left<0?'var(--bad)':'var(--ink)')+'">'+fmt(left)+'</div>'
+             +'<div class="bar"><i style="width:'+Math.min(100,p)+'%;background:'+color(p)+'"></i></div>'
+             +'<div class="row small"><span>خرجت: '+fmt(spent)+'</span><span>المتوفر: '+fmt(sal)+'</span></div>';
+            var now=new Date();
+            if(key===mk(now)&&sal>0){
+              var dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+              var daysLeft=dim-now.getDate()+1;
+              h+='<div class="small" style="margin-top:10px">باقيلك '+daysLeft+' يوم، تقدر تصرف تقريبا <b>'+fmt(Math.max(0,left)/daysLeft)+'</b> في النهار</div>';
+            }
+            h+='</div>';
+
+            h+=sourcesCard(m);
+
+            h+='<div class="card"><h3>المصاريف حسب النوع</h3>';
+            var any=false;
+            CATS.forEach(function(c){
+              var s=catSpent(m,c.id);if(!s)return;any=true;
+              var b=m.budgets[c.id]||0,pp=b>0?s/b*100:(spent?s/spent*100:0);
+              h+='<div class="cat"><div class="row"><b>'+c.i+' '+c.n+'</b><span>'+fmt(s)+(b>0?' / '+fmt(b):'')+'</span></div>'
+               +'<div class="bar" style="margin:6px 0 0"><i style="width:'+Math.min(100,pp)+'%;background:'+(b>0?color(pp):'var(--main)')+'"></i></div></div>';
+            });
+            if(!any)h+='<div class="empty">ما كاين حتى مصروف في هذا الشهر.<br>أضغط على «－ مصروف» باش تزيد.</div>';
+            h+='</div>';
+            return h+monthsCard();
+          }
+
+          function list(m){
+            var items=m.expenses.map(function(e){return{k:'e',x:e}}).concat(incList(m).map(function(x){return{k:'i',x:x}}));
+            var h=sumCards(m,mk(cur));
+            if(!items.length)return h+'<div class="empty">ما كاين حتى عملية في هذا الشهر.</div>';
+            items.sort(function(a,b){var da=a.x.date,db=b.x.date;return da<db?1:da>db?-1:b.x.id-a.x.id});
+            h+='<div class="card">';
+            items.forEach(function(it){
+              var e=it.x,d=esc(e.date.split('-').reverse().join('/'))+(e.note?' · '+esc(e.note):'');
+              if(it.k==='i'){
+                h+='<div class="exp inc"><div class="dot">💰</div><div class="t"><b>'+esc(e.source||'مدخول')+'</b><span>'+d+'</span></div>'
+                 +'<div class="amt">+'+fmt(e.amount)+'</div><button class="del" onclick="delInc('+e.id+')" aria-label="حذف">🗑</button></div>';
+              }else{
+                var c=catOf(e.cat);
+                h+='<div class="exp"><div class="dot">'+c.i+'</div><div class="t"><b>'+c.n+'</b><span>'+d+'</span></div>'
+                 +'<div class="amt">−'+fmt(e.amount)+'</div><button class="del" onclick="delExp('+e.id+')" aria-label="حذف">🗑</button></div>';
+              }
+            });
+            return h+'</div>';
+          }
+
+          function budget(m){
+            var h='<div class="card"><h3>راتب ثابت شهري (اختياري)</h3><div class="small">إذا دخلتو يتحسب وحدو كل شهر. أي مدخول آخر تزيدو بزر «＋ مدخول».</div><label>مبلغ الراتب (دج)</label>'
+             +'<input id="sal" type="number" inputmode="decimal" value="'+(m.salary||'')+'" placeholder="مثال: 60000"></div>'
+             +'<div class="card"><h3>ميزانية كل نوع (اختياري)</h3><div class="small">حدد قدّاش تحب تصرف على كل حاجة، والتطبيق ينبهك كي تقرب تفوتها.</div>';
+            CATS.forEach(function(c){
+              h+='<label>'+c.i+' '+c.n+'</label><input data-c="'+c.id+'" type="number" inputmode="decimal" value="'+(m.budgets[c.id]||'')+'" placeholder="0">';
+            });
+            h+='</div><button class="btn" onclick="saveBudget()">حفظ</button>'
+             +'<div class="card" style="margin-top:14px"><h3>استيراد من 1Money</h3><div class="small">يستورد المصاريف والمداخيل (بالأخضر) من النسخة الاحتياطية (جويلية → نوفمبر 2026). تقدر تعاودها بلا ما تتكرر العمليات.</div><button class="btn sec" onclick="import1Money()">استيراد</button></div>';
+            return h;
+          }
+
+          function import1Money(){
+            var D=window.IMPORT_1MONEY;
+            if(!D||!D.length){alert('ما لقيت بيانات الاستيراد');return}
+            var added=0,addedI=0,skipped=0,inc={};
+            D.forEach(function(x){
+              var k=x.d.slice(0,7);
+              if(!S.months[k])S.months[k]={salary:0,budgets:{},expenses:[],incomes:[]};
+              var m=S.months[k];
+              if(x.t==='i'){
+                inc[k]=(inc[k]||0)+x.a;
+                if(incList(m).some(function(e){return e.id===x.id})){skipped++;return}
+                m.incomes.push({id:x.id,amount:x.a,source:'راتب',date:x.d,note:x.n||''});
+                addedI++;return;
+              }
+              if(m.expenses.some(function(e){return e.id===x.id})){skipped++;return}
+              m.expenses.push({id:x.id,amount:x.a,cat:x.c,date:x.d,note:x.n||''});
+              added++;
+            });
+            Object.keys(inc).forEach(function(k){var m=S.months[k];if(m.salary>0&&Math.abs(m.salary-inc[k])<0.5)m.salary=0});
+            var LM={'خضر':'veg','فواكه':'fruit','مكسرات':'nuts','جبن':'cheese','منظفات':'clean','لحم بقري':'meat'},lastBy={};
+            D.forEach(function(x){if(x.t==='e'&&(!lastBy[x.c]||x.d>lastBy[x.c]))lastBy[x.c]=x.d});
+            SH.items.forEach(function(it){var c=LM[it.name];if(c&&lastBy[c]&&(!it.last||lastBy[c]>it.last))it.last=lastBy[c]});
+            saveShop();
+            save();
+            alert('تم: '+added+' مصروف و'+addedI+' مدخول تزادو'+(skipped?'، و'+skipped+' كانو موجودين':''));
+            tab('home');
+          }
+
+          function saveBudget(){
+            var m=getM(mk(cur));
+            m.salary=parseFloat(document.getElementById('sal').value)||0;
+            document.querySelectorAll('input[data-c]').forEach(function(i){
+              var v=parseFloat(i.value)||0;
+              if(v>0)m.budgets[i.dataset.c]=v;else delete m.budgets[i.dataset.c];
+            });
+            save();tab('home');
+          }
+
+          function today(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+
+          function openAdd(type){
+            if(type==='i')return openInc();
+            var key=mk(cur),now=new Date();
+            var def=(key===mk(now))?today():key+'-01';
+            var opts=CATS.map(function(c){return '<option value="'+c.id+'">'+c.i+' '+c.n+'</option>'}).join('');
+            document.getElementById('sheetin').innerHTML='<h3>مصروف جديد</h3>'
+             +'<label>المبلغ (دج)</label><input id="aAmt" type="number" inputmode="decimal" placeholder="0">'
+             +'<label>النوع</label><select id="aCat">'+opts+'</select>'
+             +'<div class="grid2"><div><label>التاريخ</label><input id="aDate" type="date" value="'+def+'"></div>'
+             +'<div><label>ملاحظة</label><input id="aNote" type="text" placeholder="اختياري"></div></div>'
+             +'<button class="btn" onclick="addExp()">زيد</button><button class="btn sec" onclick="closeSheet()">إلغاء</button>';
+            document.getElementById('sheet').classList.add('show');
+            setTimeout(function(){document.getElementById('aAmt').focus()},150);
+          }
+          function srcList(){
+            var seen={},out=[];
+            ['راتب','مساعدة','عمل إضافي','هدية','تحويل'].forEach(function(s){seen[s]=1;out.push(s)});
+            Object.keys(S.months).forEach(function(k){incList(S.months[k]).forEach(function(x){if(x.source&&!seen[x.source]){seen[x.source]=1;out.push(x.source)}})});
+            return out.slice(0,12);
+          }
+          function pickSrc(el){document.getElementById('iSrc').value=el.textContent}
+          function openInc(){
+            var key=mk(cur),now=new Date(),def=(key===mk(now))?today():key+'-01';
+            var chips=srcList().map(function(s){return '<span class="chip" onclick="pickSrc(this)">'+esc(s)+'</span>'}).join('');
+            document.getElementById('sheetin').innerHTML='<h3 style="color:var(--inc-d)">💰 مدخول جديد</h3>'
+             +'<label>المبلغ (دج)</label><input id="iAmt" type="number" inputmode="decimal" placeholder="0">'
+             +'<label>المصدر (من وين جاك؟)</label><input id="iSrc" type="text" placeholder="مثال: راتب، مساعدة…"><div class="chips">'+chips+'</div>'
+             +'<div class="grid2"><div><label>التاريخ</label><input id="iDate" type="date" value="'+def+'"></div>'
+             +'<div><label>ملاحظة</label><input id="iNote" type="text" placeholder="اختياري"></div></div>'
+             +'<button class="btn inc" onclick="addInc()">زيد المدخول</button><button class="btn sec" onclick="closeSheet()">إلغاء</button>';
+            document.getElementById('sheet').classList.add('show');
+            setTimeout(function(){document.getElementById('iAmt').focus()},150);
+          }
+          function addInc(){
+            var amt=parseFloat(document.getElementById('iAmt').value);
+            if(!(amt>0)){document.getElementById('iAmt').focus();return}
+            var date=document.getElementById('iDate').value||today();
+            var k=date.slice(0,7),m=getM(k);
+            incList(m).push({id:Date.now(),amount:amt,source:document.getElementById('iSrc').value.trim()||'مدخول',date:date,note:document.getElementById('iNote').value.trim()});
+            save();closeSheet();
+            var parts=k.split('-');cur=new Date(+parts[0],+parts[1]-1,1);
+            render();
+          }
+          function delInc(id){
+            if(!confirm('تحب تمسح هذا المدخول؟'))return;
+            var m=getM(mk(cur));
+            m.incomes=incList(m).filter(function(e){return e.id!==id});
+            save();render();
+          }
+          function closeSheet(){document.getElementById('sheet').classList.remove('show')}
+          function isOpen(){return document.getElementById('sheet').classList.contains('show')}
+
+          function addExp(){
+            var amt=parseFloat(document.getElementById('aAmt').value);
+            if(!(amt>0)){document.getElementById('aAmt').focus();return}
+            var date=document.getElementById('aDate').value||today();
+            var k=date.slice(0,7),m=getM(k);
+            m.expenses.push({id:Date.now(),amount:amt,cat:document.getElementById('aCat').value,date:date,note:document.getElementById('aNote').value.trim()});
+            save();closeSheet();
+            var parts=k.split('-');cur=new Date(+parts[0],+parts[1]-1,1);
+            render();
+          }
+          function delExp(id){
+            if(!confirm('تحب تمسح هذا المصروف؟'))return;
+            var m=getM(mk(cur));
+            m.expenses=m.expenses.filter(function(e){return e.id!==id});
+            save();render();
+          }
+
+          window.handleBack=function(){
+            if(isOpen()){closeSheet();return true}
+            if(curTab!=='home'){tab('home');return true}
+            return false;
+          };
+          /* ===== المشتريات ===== */
+          var SK='masrouf_shop_v1';
+          var COLORS=['#ec4899','#6366f1','#14b8a6','#84cc16','#f59e0b','#78716c','#ef4444','#a855f7','#0ea5e9','#22c55e'];
+          var FREQ={7:'كل أسبوع',14:'كل أسبوعين',30:'كل شهر'};
+          var DEF=[['خضر','🥬',14,'veg'],['لحم بقري','🥩',7,'meat'],['حوت','🐟',30,'food'],['دجاج','🍗',30,'meat'],['منظفات','🧴',30,'clean'],['بقوليات','🫘',30,'food'],['جبن','🧀',30,'cheese'],['فواكه','🍎',30,'fruit'],['مكسرات','🥜',30,'nuts']];
+          var SH=loadShop();
+          function loadShop(){
+            try{var d=JSON.parse(localStorage.getItem(SK));if(d&&d.items)return d}catch(e){}
+            var t=today();
+            return{hour:9,items:DEF.map(function(x,i){return{id:i+1,name:x[0],icon:x[1],every:x[2],exp:x[3],color:COLORS[i%COLORS.length],last:null,start:t}})};
+          }
+          function saveShop(){try{localStorage.setItem(SK,JSON.stringify(SH))}catch(e){}sync()}
+          function pd(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]).getTime()}
+          function dueMs(it){var d=new Date(pd(it.last||it.start));if(it.last)d.setDate(d.getDate()+it.every);return d.getTime()}
+          function daysLeft(it){return Math.round((dueMs(it)-pd(today()))/86400000)}
+          function dueItems(){return SH.items.filter(function(i){return daysLeft(i)<=0})}
+          function sync(){
+            try{if(window.Android&&Android.sync)Android.sync(JSON.stringify({hour:SH.hour,items:SH.items.map(function(i){return{n:i.name,d:dueMs(i)}})}))}catch(e){}
+          }
+          function itemById(id){return SH.items.filter(function(i){return i.id===id})[0]}
+
+          function shop(){
+            var h='',d=dueItems();
+            if(d.length)h+='<div class="alert warn">🛒 لازمك تشري: '+d.map(function(i){return esc(i.name)}).join('، ')+'</div>';
+            else h+='<div class="alert good">✅ ما عندك حتى حاجة تشريها دوك</div>';
+            h+='<div class="g">';
+            SH.items.forEach(function(it){
+              var dl=daysLeft(it),late=dl<=0;
+              var st=dl<0?'فات بـ '+(-dl)+' يوم':dl===0?'اليوم':'بعد '+dl+' يوم';
+              h+='<div class="gi" onclick="openBuy('+it.id+')"><div class="nm">'+esc(it.name)+'</div>'
+               +'<div class="ci'+(late?' late':'')+'" style="background:'+it.color+'26">'+esc(it.icon)+'</div>'
+               +'<div class="st'+(late?' due':'')+'">'+st+'</div><div class="fq">'+(FREQ[it.every]||'')+'</div></div>';
+            });
+            h+='<div class="gi" onclick="openEdit(0)"><div class="nm">&nbsp;</div><div class="ci add">+</div><div class="st">زيد</div></div></div>';
+            var ho='';for(var i=6;i<=22;i++)ho+='<option value="'+i+'"'+(i===SH.hour?' selected':'')+'>'+i+':00</option>';
+            h+='<div class="card"><h3>وقت التنبيه</h3><div class="small">كل يوم في هذا الوقت ينبهك على اللي حان وقتو، وكي تسجل بلي شريتو يوقف.</div><label>الساعة</label><select onchange="setHour(this.value)">'+ho+'</select></div>';
+            return h;
+          }
+          function setHour(v){SH.hour=parseInt(v)||9;saveShop()}
+
+          function openBuy(id){
+            var it=itemById(id);if(!it)return;
+            var dl=daysLeft(it);
+            var st=dl<0?'فات بـ '+(-dl)+' يوم':dl===0?'وقتو اليوم':'بعد '+dl+' يوم';
+            document.getElementById('sheetin').innerHTML='<h3>'+esc(it.icon)+' '+esc(it.name)+'</h3>'
+             +'<div class="small">'+(FREQ[it.every]||'')+' · '+st+'</div>'
+             +'<label>قداش خلصت؟ (دج، اختياري)</label><input id="bAmt" type="number" inputmode="decimal" placeholder="0">'
+             +'<button class="btn" onclick="doBuy('+id+')">✅ شريتو</button>'
+             +'<button class="btn sec" onclick="openEdit('+id+')">تعديل</button>';
+            document.getElementById('sheet').classList.add('show');
+          }
+          function doBuy(id){
+            var it=itemById(id);if(!it)return;
+            var amt=parseFloat(document.getElementById('bAmt').value);
+            it.last=today();
+            if(amt>0){
+              var m=getM(mk(new Date()));
+              m.expenses.push({id:Date.now(),amount:amt,cat:it.exp||'food',date:today(),note:it.name});
+              save();
+            }
+            saveShop();closeSheet();render();
+          }
+          function openEdit(id){
+            var it=id?itemById(id):{name:'',icon:'🛒',every:30,exp:'food'};
+            var fo=[7,14,30].map(function(f){return '<option value="'+f+'"'+(f===it.every?' selected':'')+'>'+FREQ[f]+'</option>'}).join('');
+            var co=CATS.map(function(c){return '<option value="'+c.id+'"'+(c.id===it.exp?' selected':'')+'>'+c.i+' '+c.n+'</option>'}).join('');
+            document.getElementById('sheetin').innerHTML='<h3>'+(id?'تعديل':'حاجة جديدة')+'</h3>'
+             +'<div class="grid2"><div><label>الاسم</label><input id="eName" type="text" value="'+esc(it.name)+'"></div>'
+             +'<div><label>أيقونة (إيموجي)</label><input id="eIcon" type="text" value="'+esc(it.icon)+'"></div></div>'
+             +'<label>كل قداش؟</label><select id="eEvery">'+fo+'</select>'
+             +'<label>تتحسب في مصاريف</label><select id="eExp">'+co+'</select>'
+             +'<button class="btn" onclick="saveEdit('+id+')">حفظ</button>'
+             +(id?'<button class="btn sec" style="color:var(--bad)" onclick="delItem('+id+')">مسح</button>':'')
+             +'<button class="btn sec" onclick="closeSheet()">إلغاء</button>';
+            document.getElementById('sheet').classList.add('show');
+          }
+          function saveEdit(id){
+            var name=document.getElementById('eName').value.trim();
+            if(!name){document.getElementById('eName').focus();return}
+            var icon=document.getElementById('eIcon').value.trim()||'🛒';
+            var every=parseInt(document.getElementById('eEvery').value);
+            var exp=document.getElementById('eExp').value;
+            if(id){var it=itemById(id);it.name=name;it.icon=icon;it.every=every;it.exp=exp}
+            else SH.items.push({id:Date.now(),name:name,icon:icon,every:every,exp:exp,color:COLORS[SH.items.length%COLORS.length],last:null,start:today()});
+            saveShop();closeSheet();render();
+          }
+          function delItem(id){
+            if(!confirm('تحب تمسح هذه الحاجة؟'))return;
+            SH.items=SH.items.filter(function(i){return i.id!==id});
+            saveShop();closeSheet();render();
+          }
+
+          sync();
+          tab('home');
+          </script>
+          </body>
+          </html>
+          __MASROUF_EOF__
+      - name: Create data1money.js
+        run: |
+          mkdir -p "$(dirname 'app/src/main/assets/data1money.js')"
+          cat > 'app/src/main/assets/data1money.js' <<'__MASROUF_EOF__'
+          window.IMPORT_1MONEY=[{"id": 509442459582464, "t": "e", "d": "2026-07-13", "a": 10.0, "c": "meat", "n": "الطيبات بدأت بالتخلي عن الدجاج و البيض و الفرينة بانواعها"}, {"id": 507110661715968, "t": "e", "d": "2026-07-14", "a": 170.0, "c": "fruit", "n": "عنب"}, {"id": 507110151961600, "t": "e", "d": "2026-07-14", "a": 150.0, "c": "veg", "n": "بصل"}, {"id": 507110292649984, "t": "e", "d": "2026-07-14", "a": 100.0, "c": "veg", "n": "ثوم"}, {"id": 507110480294912, "t": "e", "d": "2026-07-14", "a": 210.0, "c": "veg", "n": "باتنجال"}, {"id": 507110489244672, "t": "e", "d": "2026-07-14", "a": 300.0, "c": "veg", "n": "بطاطس"}, {"id": 507110245913600, "t": "e", "d": "2026-07-14", "a": 290.0, "c": "food", "n": "طماطم هربسة"}, {"id": 507110219528192, "t": "e", "d": "2026-07-14", "a": 600.0, "c": "food", "n": "ياهورت قاطو ياهورت"}, {"id": 507110168904704, "t": "e", "d": "2026-07-14", "a": 460.0, "c": "veg", "n": "قرعة فلفل طماطم خيار"}, {"id": 507110069445632, "t": "e", "d": "2026-07-14", "a": 200.0, "c": "nuts", "n": ""}, {"id": 507110207766528, "t": "e", "d": "2026-07-14", "a": 600.0, "c": "car", "n": "الخدام 2"}, {"id": 507110201873408, "t": "e", "d": "2026-07-14", "a": 900.0, "c": "car", "n": "الزيت"}, {"id": 507110194233344, "t": "e", "d": "2026-07-14", "a": 6000.0, "c": "car", "n": "الخدام"}, {"id": 507110094710784, "t": "i", "d": "2026-07-14", "a": 26000.0, "c": "other", "n": "امينة"}, {"id": 507110104294400, "t": "i", "d": "2026-07-14", "a": 1700.0, "c": "other", "n": "كانو عندي"}, {"id": 507110257534976, "t": "e", "d": "2026-07-14", "a": 200.0, "c": "veg", "n": "كرومب حشيش نعناع معدنوس"}, {"id": 507110399270912, "t": "e", "d": "2026-07-14", "a": 300.0, "c": "meat", "n": "كروفات"}, {"id": 507110392154112, "t": "e", "d": "2026-07-14", "a": 370.0, "c": "meat", "n": "سردين"}, {"id": 507157102511104, "t": "e", "d": "2026-07-14", "a": 180.0, "c": "veg", "n": "لاكريم تاع سهرة"}, {"id": 507197555306496, "t": "e", "d": "2026-07-15", "a": 220.0, "c": "clean", "n": "صاليبون"}, {"id": 507197695690752, "t": "e", "d": "2026-07-15", "a": 340.0, "c": "clean", "n": "مايونيز"}, {"id": 507197621583872, "t": "e", "d": "2026-07-15", "a": 230.0, "c": "food", "n": "ماء"}, {"id": 507197792801792, "t": "e", "d": "2026-07-15", "a": 270.0, "c": "cheese", "n": "فروماج ramdi"}, {"id": 507203216830464, "t": "e", "d": "2026-07-15", "a": 120.0, "c": "food", "n": "لاكريم"}, {"id": 507251706286080, "t": "e", "d": "2026-07-16", "a": 1000.0, "c": "veg", "n": "نخبيها"}, {"id": 507281762069504, "t": "e", "d": "2026-07-16", "a": 1000.0, "c": "transport", "n": ""}, {"id": 507286503818240, "t": "e", "d": "2026-07-16", "a": 600.0, "c": "veg", "n": "لاكريم"}, {"id": 507417119846400, "t": "e", "d": "2026-07-18", "a": 1100.0, "c": "cheese", "n": ""}, {"id": 507419758698496, "t": "e", "d": "2026-07-18", "a": 990.0, "c": "cheese", "n": ""}, {"id": 507419774883840, "t": "e", "d": "2026-07-18", "a": 1000.0, "c": "meat", "n": "كروفات"}, {"id": 507427269552128, "t": "e", "d": "2026-07-18", "a": 100.0, "c": "nuts", "n": "شاي"}, {"id": 507454583760896, "t": "e", "d": "2026-07-18", "a": 670.0, "c": "clean", "n": ""}, {"id": 507454633923584, "t": "e", "d": "2026-07-18", "a": 380.0, "c": "food", "n": "خبز توتست+شاي براري"}, {"id": 507466788129792, "t": "e", "d": "2026-07-18", "a": 540.0, "c": "food", "n": "ماء غازوز سكر"}, {"id": 507540134598656, "t": "e", "d": "2026-07-19", "a": 250.0, "c": "veg", "n": ""}, {"id": 507616613840896, "t": "e", "d": "2026-07-20", "a": 3500.0, "c": "car", "n": "نافذة السيارة"}, {"id": 507617451222016, "t": "i", "d": "2026-07-20", "a": 2000.0, "c": "other", "n": ""}, {"id": 507618535723008, "t": "e", "d": "2026-07-20", "a": 200.0, "c": "food", "n": "قهوة jus jus  خفاف"}, {"id": 507642733888512, "t": "e", "d": "2026-07-20", "a": 440.0, "c": "food", "n": "papier cuisson eau  yahourt"}, {"id": 507734807526400, "t": "e", "d": "2026-07-20", "a": 360.0, "c": "nuts", "n": "جوزية عقدة"}, {"id": 507701305818112, "t": "e", "d": "2026-07-21", "a": 220.0, "c": "nuts", "n": "شاي شكولا ماء"}, {"id": 507701336688640, "t": "e", "d": "2026-07-21", "a": 130.0, "c": "nuts", "n": "لوز ماء"}, {"id": 507708883640320, "t": "e", "d": "2026-07-21", "a": 2950.0, "c": "food", "n": "ساندويتش"}, {"id": 507708963592192, "t": "i", "d": "2026-07-21", "a": 2000.0, "c": "other", "n": "afaf"}, {"id": 507708982436864, "t": "e", "d": "2026-07-21", "a": 400.0, "c": "veg", "n": "طماطم بطاطس"}, {"id": 507734611328000, "t": "e", "d": "2026-07-21", "a": 540.0, "c": "food", "n": "زيتون طون ماييس"}, {"id": 507732123449344, "t": "e", "d": "2026-07-21", "a": 260.0, "c": "food", "n": "jus"}, {"id": 507784559353856, "t": "e", "d": "2026-07-22", "a": 1000.0, "c": "meat", "n": "لحم"}, {"id": 507784592491520, "t": "e", "d": "2026-07-22", "a": 200.0, "c": "fruit", "n": "تمر"}, {"id": 507784618487808, "t": "e", "d": "2026-07-22", "a": 120.0, "c": "food", "n": "شعير"}, {"id": 507824851138560, "t": "e", "d": "2026-07-22", "a": 360.0, "c": "food", "n": "ماء لاكريم"}, {"id": 507824835872768, "t": "e", "d": "2026-07-22", "a": 30.0, "c": "transport", "n": "bus"}, {"id": 507990152088576, "t": "e", "d": "2026-07-23", "a": 360.0, "c": "food", "n": "ياهورت"}, {"id": 507990160023552, "t": "e", "d": "2026-07-23", "a": 850.0, "c": "clean", "n": "ريحة"}, {"id": 507989901831168, "t": "i", "d": "2026-07-23", "a": 6000.0, "c": "other", "n": ""}, {"id": 507989907682304, "t": "e", "d": "2026-07-23", "a": 160.0, "c": "food", "n": "كاكاو زبيب"}, {"id": 507989881473024, "t": "e", "d": "2026-07-24", "a": 150.0, "c": "food", "n": "frit"}, {"id": 508061041088512, "t": "e", "d": "2026-07-24", "a": 1750.0, "c": "food", "n": "عشاء"}, {"id": 508061515801600, "t": "e", "d": "2026-07-24", "a": 1000.0, "c": "transport", "n": ""}, {"id": 508058222791680, "t": "e", "d": "2026-07-24", "a": 140.0, "c": "food", "n": "لاكريم"}, {"id": 508043214054400, "t": "e", "d": "2026-07-25", "a": 80.0, "c": "food", "n": "كرواصون"}, {"id": 508043223568384, "t": "e", "d": "2026-07-25", "a": 160.0, "c": "food", "n": "غاطو"}, {"id": 508061068811264, "t": "e", "d": "2026-07-25", "a": 2000.0, "c": "food", "n": "فطور arabesque"}, {"id": 508061089868800, "t": "e", "d": "2026-07-25", "a": 100.0, "c": "food", "n": "لاكريم"}, {"id": 508061059002368, "t": "e", "d": "2026-07-25", "a": 1000.0, "c": "meat", "n": "لحم"}, {"id": 508060912048128, "t": "e", "d": "2026-07-25", "a": 180.0, "c": "veg", "n": "فلفل"}, {"id": 508061025555456, "t": "e", "d": "2026-07-25", "a": 40.0, "c": "food", "n": "كرواصون"}, {"id": 508061102918656, "t": "e", "d": "2026-07-25", "a": 1300.0, "c": "cheese", "n": "زبدة فرماج"}, {"id": 508070476235776, "t": "i", "d": "2026-07-25", "a": 2000.0, "c": "other", "n": "عطاتهالي أمينة"}, {"id": 508084406032384, "t": "i", "d": "2026-07-25", "a": 2000.0, "c": "other", "n": "ديتها لأمينة"}, {"id": 508084421763072, "t": "e", "d": "2026-07-25", "a": 590.0, "c": "food", "n": "jus yahourt farine"}, {"id": 508144901521408, "t": "e", "d": "2026-07-26", "a": 590.0, "c": "food", "n": "غاطو ماء بيض"}, {"id": 508146753630208, "t": "i", "d": "2026-07-26", "a": 500.0, "c": "other", "n": "سامية"}, {"id": 508170675109888, "t": "e", "d": "2026-07-26", "a": 410.0, "c": "food", "n": "صلصة طماطم خبز زيتون"}, {"id": 508226291607552, "t": "e", "d": "2026-07-27", "a": 680.0, "c": "meat", "n": "حوت كونجلي"}, {"id": 508227398607872, "t": "e", "d": "2026-07-27", "a": 640.0, "c": "food", "n": "ماء ارز"}, {"id": 508232940464128, "t": "i", "d": "2026-07-27", "a": 2000.0, "c": "other", "n": "مساعدة امينة"}, {"id": 508258990389248, "t": "e", "d": "2026-07-27", "a": 270.0, "c": "food", "n": "ماييس"}, {"id": 508343776863232, "t": "e", "d": "2026-07-28", "a": 360.0, "c": "veg", "n": ""}, {"id": 508343792368640, "t": "e", "d": "2026-07-28", "a": 180.0, "c": "tea", "n": ""}, {"id": 508399248196608, "t": "e", "d": "2026-07-29", "a": 1000.0, "c": "meat", "n": ""}, {"id": 508399266582528, "t": "e", "d": "2026-07-29", "a": 210.0, "c": "fruit", "n": "تمر"}, {"id": 508399285662720, "t": "i", "d": "2026-07-29", "a": 2000.0, "c": "other", "n": "امينة"}, {"id": 508400065764352, "t": "e", "d": "2026-07-29", "a": 100.0, "c": "veg", "n": "حشاوش"}, {"id": 508400059629568, "t": "e", "d": "2026-07-29", "a": 100.0, "c": "veg", "n": "قرغة"}, {"id": 508400089728000, "t": "e", "d": "2026-07-29", "a": 75.0, "c": "veg", "n": "زرودية خيار"}, {"id": 508400080178176, "t": "e", "d": "2026-07-29", "a": 200.0, "c": "veg", "n": "بطاطس"}, {"id": 508404115998720, "t": "e", "d": "2026-07-29", "a": 170.0, "c": "veg", "n": "طاطم لوبيا ماشطو"}, {"id": 508400334580736, "t": "e", "d": "2026-07-29", "a": 100.0, "c": "veg", "n": "بصل"}, {"id": 508402435604480, "t": "e", "d": "2026-07-29", "a": 260.0, "c": "food", "n": "عصير"}, {"id": 508404173670400, "t": "e", "d": "2026-07-29", "a": 25.0, "c": "transport", "n": ""}, {"id": 508436189030400, "t": "e", "d": "2026-07-29", "a": 260.0, "c": "food", "n": "زيت"}, {"id": 508439097737216, "t": "i", "d": "2026-07-29", "a": 2000.0, "c": "other", "n": "امينة"}, {"id": 508439113462784, "t": "e", "d": "2026-07-29", "a": 240.0, "c": "food", "n": "ماء"}, {"id": 508439122075648, "t": "e", "d": "2026-07-29", "a": 480.0, "c": "cheese", "n": "شيدار"}, {"id": 508525413105664, "t": "e", "d": "2026-07-30", "a": 170.0, "c": "food", "n": "لاكريم ماء"}, {"id": 508525468751872, "t": "e", "d": "2026-07-30", "a": 75.0, "c": "food", "n": "خبز"}, {"id": 508525520862208, "t": "e", "d": "2026-07-30", "a": 200.0, "c": "food", "n": "خبز توست"}, {"id": 508609623816192, "t": "e", "d": "2026-07-31", "a": 1500.0, "c": "meat", "n": ""}, {"id": 508609629284352, "t": "i", "d": "2026-07-31", "a": 6000.0, "c": "other", "n": ""}, {"id": 508609636764672, "t": "e", "d": "2026-07-31", "a": 250.0, "c": "veg", "n": "بطاطا شلاظة"}, {"id": 508609650717696, "t": "e", "d": "2026-07-31", "a": 200.0, "c": "fruit", "n": "تمر"}, {"id": 508609676523520, "t": "e", "d": "2026-07-31", "a": 100.0, "c": "food", "n": "خبز خبز شعير"}, {"id": 508612133616640, "t": "e", "d": "2026-07-31", "a": 340.0, "c": "food", "n": "بيض غاطو ارز زيتون"}, {"id": 508679532455936, "t": "e", "d": "2026-08-01", "a": 1700.0, "c": "car", "n": "netoiyage"}, {"id": 508692388589568, "t": "i", "d": "2026-08-01", "a": 4000.0, "c": "other", "n": ""}, {"id": 508692100861952, "t": "e", "d": "2026-08-01", "a": 6000.0, "c": "car", "n": "شاكما"}, {"id": 508780021998592, "t": "e", "d": "2026-08-02", "a": 550.0, "c": "food", "n": "لاكريم"}, {"id": 508851595880448, "t": "e", "d": "2026-08-02", "a": 980.0, "c": "food", "n": "عصير فطر ماييس"}, {"id": 508795560383488, "t": "e", "d": "2026-08-02", "a": 240.0, "c": "cheese", "n": "شيدار"}, {"id": 508795590089728, "t": "i", "d": "2026-08-02", "a": 10000.0, "c": "other", "n": ""}, {"id": 508795604391936, "t": "e", "d": "2026-08-02", "a": 500.0, "c": "nuts", "n": "لاكريم"}, {"id": 508795613201408, "t": "e", "d": "2026-08-02", "a": 280.0, "c": "nuts", "n": "شاي لوز"}, {"id": 508987766294528, "t": "e", "d": "2026-08-03", "a": 3350.0, "c": "car", "n": "chaine couroie"}, {"id": 508843966779392, "t": "e", "d": "2026-08-03", "a": 1200.0, "c": "car", "n": "سيليكون"}, {"id": 508843980767232, "t": "e", "d": "2026-08-03", "a": 700.0, "c": "car", "n": ""}, {"id": 508851515711488, "t": "e", "d": "2026-08-03", "a": 3500.0, "c": "car", "n": "حق يدو"}, {"id": 508847805096960, "t": "e", "d": "2026-08-03", "a": 1000.0, "c": "car", "n": "paralilisme"}, {"id": 508852051265536, "t": "e", "d": "2026-08-03", "a": 340.0, "c": "clean", "n": "bingo"}, {"id": 508877771160576, "t": "i", "d": "2026-08-03", "a": 6000.0, "c": "other", "n": "من عند امينة"}, {"id": 508877707318272, "t": "e", "d": "2026-08-03", "a": 570.0, "c": "food", "n": "خل زبيب فرناج"}, {"id": 508877663049728, "t": "e", "d": "2026-08-03", "a": 1050.0, "c": "nuts", "n": "جوز لوز"}, {"id": 508877647699968, "t": "e", "d": "2026-08-03", "a": 150.0, "c": "veg", "n": "بطاطا"}, {"id": 508877674012672, "t": "e", "d": "2026-08-03", "a": 1500.0, "c": "meat", "n": "لحم مفروم"}, {"id": 508936356961280, "t": "e", "d": "2026-08-04", "a": 400.0, "c": "meat", "n": "سرين"}, {"id": 508936398224384, "t": "e", "d": "2026-08-04", "a": 100.0, "c": "veg", "n": "باتنجال"}, {"id": 508936416422912, "t": "e", "d": "2026-08-04", "a": 100.0, "c": "veg", "n": "باتجال"}, {"id": 508936364035072, "t": "e", "d": "2026-08-04", "a": 460.0, "c": "meat", "n": "كباب"}, {"id": 508936427414528, "t": "e", "d": "2026-08-04", "a": 120.0, "c": "veg", "n": "فلفل"}, {"id": 508936463301632, "t": "e", "d": "2026-08-04", "a": 200.0, "c": "veg", "n": "بطاطس"}, {"id": 509316166211584, "t": "i", "d": "2026-08-04", "a": 30000.0, "c": "other", "n": ""}, {"id": 508987726066688, "t": "e", "d": "2026-08-05", "a": 1000.0, "c": "transport", "n": "essence"}, {"id": 508987736930304, "t": "e", "d": "2026-08-05", "a": 500.0, "c": "food", "n": "ماء ليزيسكيمو تناناس"}, {"id": 509025753127936, "t": "e", "d": "2026-08-05", "a": 410.0, "c": "food", "n": "jus طماطم"}, {"id": 509114335718400, "t": "e", "d": "2026-08-06", "a": 450.0, "c": "food", "n": "كرام فراش خبز توست شطولا"}, {"id": 509148963430400, "t": "e", "d": "2026-08-06", "a": 8400.0, "c": "food", "n": "ملابس"}, {"id": 509155136035840, "t": "e", "d": "2026-08-06", "a": 2150.0, "c": "food", "n": "سوبيرات شراقة"}, {"id": 509223154150400, "t": "e", "d": "2026-08-07", "a": 6000.0, "c": "food", "n": "amina"}, {"id": 509242403755008, "t": "e", "d": "2026-08-07", "a": 1000.0, "c": "meat", "n": "لحم مفروم"}, {"id": 509242437706752, "t": "e", "d": "2026-08-07", "a": 410.0, "c": "food", "n": "لوفوتيروكس دواء"}, {"id": 509251146470400, "t": "e", "d": "2026-08-07", "a": 200.0, "c": "food", "n": "دونتفريس"}, {"id": 509308006756352, "t": "e", "d": "2026-08-08", "a": 380.0, "c": "food", "n": "كاجو عصير"}, {"id": 509316181343232, "t": "e", "d": "2026-08-08", "a": 7000.0, "c": "food", "n": "amina"}, {"id": 509323669246976, "t": "e", "d": "2026-08-08", "a": 1000.0, "c": "food", "n": "عصير غاطو ارز حلوى امين ماروخا"}, {"id": 509333116663808, "t": "i", "d": "2026-08-09", "a": 30000.0, "c": "other", "n": ""}, {"id": 509333129007104, "t": "e", "d": "2026-08-09", "a": 2000.0, "c": "food", "n": "pc"}, {"id": 509333137191936, "t": "e", "d": "2026-08-09", "a": 1400.0, "c": "food", "n": "لاكريم"}, {"id": 509679990211584, "t": "e", "d": "2026-08-09", "a": 240.0, "c": "food", "n": "لاكريم لبقاي افراد العائلة"}, {"id": 509380210006016, "t": "e", "d": "2026-08-09", "a": 250.0, "c": "food", "n": "fromage jus amine"}, {"id": 509821591770112, "t": "e", "d": "2026-08-09", "a": 20000.0, "c": "food", "n": "عطيتهم امينة صرف 1200 و شرينا حجاب صباط 13 اوت ب17000"}, {"id": 509679743532032, "t": "e", "d": "2026-08-09", "a": 1000.0, "c": "transport", "n": "essence"}, {"id": 509503915783168, "t": "e", "d": "2026-08-10", "a": 120.0, "c": "food", "n": "jus"}, {"id": 509680049722368, "t": "e", "d": "2026-08-10", "a": 100.0, "c": "food", "n": "لاكريم بنات"}, {"id": 509590988484608, "t": "e", "d": "2026-08-11", "a": 200.0, "c": "food", "n": "كاجو"}, {"id": 509591001758720, "t": "e", "d": "2026-08-11", "a": 350.0, "c": "food", "n": "لاكريم"}, {"id": 509679637876736, "t": "e", "d": "2026-08-12", "a": 1200.0, "c": "food", "n": "شواء"}, {"id": 509679554468864, "t": "e", "d": "2026-08-12", "a": 150.0, "c": "food", "n": "خبز اللب"}, {"id": 509821671325696, "t": "e", "d": "2026-08-13", "a": 300.0, "c": "food", "n": "parking"}, {"id": 509821127818240, "t": "e", "d": "2026-08-13", "a": 1000.0, "c": "food", "n": "عشاء عطيتها سيداحمد"}, {"id": 509778640290816, "t": "e", "d": "2026-08-13", "a": 540.0, "c": "food", "n": "عصير خبز اوان"}, {"id": 509778628525056, "t": "e", "d": "2026-08-13", "a": 500.0, "c": "food", "n": "ليزيسكيمو"}, {"id": 509778691098624, "t": "e", "d": "2026-08-13", "a": 200.0, "c": "food", "n": "ماييس"}, {"id": 509821352681472, "t": "e", "d": "2026-08-13", "a": 200.0, "c": "food", "n": "عصير مخيطو"}, {"id": 509821107481600, "t": "e", "d": "2026-08-14", "a": 710.0, "c": "food", "n": "شامبو ماء"}, {"id": 509830207309824, "t": "e", "d": "2026-08-14", "a": 260.0, "c": "food", "n": "فرماج"}, {"id": 509830058108928, "t": "e", "d": "2026-08-14", "a": 200.0, "c": "food", "n": "رويبة exelence"}, {"id": 509830196608000, "t": "e", "d": "2026-08-14", "a": 150.0, "c": "food", "n": "عصير الرمان"}, {"id": 509896866181120, "t": "i", "d": "2026-08-15", "a": 20000.0, "c": "other", "n": ""}, {"id": 509896899714048, "t": "e", "d": "2026-08-15", "a": 11000.0, "c": "food", "n": "ملابس 8400 و  3000"}, {"id": 509897002529792, "t": "e", "d": "2026-08-15", "a": 500.0, "c": "food", "n": "حلاقة"}, {"id": 509919838795776, "t": "e", "d": "2026-08-15", "a": 4000.0, "c": "food", "n": "بليغة"}, {"id": 509919859020800, "t": "e", "d": "2026-08-15", "a": 2000.0, "c": "food", "n": "خالتي"}, {"id": 509919868427264, "t": "e", "d": "2026-08-15", "a": 510.0, "c": "food", "n": "ارز"}, {"id": 509924879895552, "t": "i", "d": "2026-08-15", "a": 120.0, "c": "other", "n": "امين حلوى"}, {"id": 510172164919296, "t": "e", "d": "2026-08-15", "a": 1000.0, "c": "transport", "n": ""}, {"id": 510172193771520, "t": "i", "d": "2026-08-15", "a": 7000.0, "c": "other", "n": "كانو عندي زوج ملايين صرفنا 13000"}, {"id": 510018055762944, "t": "e", "d": "2026-08-16", "a": 1500.0, "c": "meat", "n": "لحم في منزل خالتي"}, {"id": 510017645412352, "t": "e", "d": "2026-08-16", "a": 1350.0, "c": "meat", "n": "لحم مفروم و مرقاز"}, {"id": 510014747339776, "t": "e", "d": "2026-08-16", "a": 1500.0, "c": "meat", "n": "فرماج"}, {"id": 510017597171712, "t": "e", "d": "2026-08-16", "a": 1280.0, "c": "meat", "n": "فرماج غودا دهان زبدة"}, {"id": 510017676110848, "t": "e", "d": "2026-08-16", "a": 220.0, "c": "fruit", "n": "تمر عنب"}, {"id": 510017684358144, "t": "e", "d": "2026-08-16", "a": 140.0, "c": "nuts", "n": "شاي لاكريم"}, {"id": 510171712202752, "t": "e", "d": "2026-08-18", "a": 1130.0, "c": "food", "n": "عصير خبز ours blon"}, {"id": 510534177456128, "t": "e", "d": "2026-08-19", "a": 300.0, "c": "veg", "n": "بطاطا"}, {"id": 510534170250240, "t": "i", "d": "2026-08-19", "a": 5000.0, "c": "other", "n": ""}, {"id": 510448347514880, "t": "e", "d": "2026-08-21", "a": 1300.0, "c": "transport", "n": ""}, {"id": 510456381241344, "t": "e", "d": "2026-08-21", "a": 50.0, "c": "food", "n": ""}, {"id": 510456387635200, "t": "e", "d": "2026-08-21", "a": 50.0, "c": "food", "n": ""}, {"id": 510456399064064, "t": "e", "d": "2026-08-21", "a": 190.0, "c": "food", "n": ""}, {"id": 510456403558400, "t": "e", "d": "2026-08-21", "a": 170.0, "c": "food", "n": ""}, {"id": 510457092772864, "t": "e", "d": "2026-08-21", "a": 50.0, "c": "food", "n": "لاكريم"}, {"id": 510479031951360, "t": "e", "d": "2026-08-21", "a": 200.0, "c": "food", "n": "كاجو"}, {"id": 510479042582528, "t": "e", "d": "2026-08-21", "a": 370.0, "c": "food", "n": "عاطو و خبز"}, {"id": 510534092086272, "t": "e", "d": "2026-08-22", "a": 300.0, "c": "food", "n": "سريدن"}, {"id": 510553022189568, "t": "e", "d": "2026-08-22", "a": 270.0, "c": "food", "n": "تمر كرموس"}, {"id": 510564064794624, "t": "e", "d": "2026-08-22", "a": 300.0, "c": "food", "n": "eskimo"}, {"id": 510610490596352, "t": "e", "d": "2026-08-22", "a": 500.0, "c": "food", "n": "nssit wech sraft"}, {"id": 510610335943680, "t": "e", "d": "2026-08-22", "a": 850.0, "c": "food", "n": "عشاء"}, {"id": 510610310017024, "t": "e", "d": "2026-08-23", "a": 100.0, "c": "food", "n": "عصير"}, {"id": 510610402677760, "t": "i", "d": "2026-08-23", "a": 4000.0, "c": "other", "n": ""}, {"id": 510610415796224, "t": "e", "d": "2026-08-23", "a": 1000.0, "c": "transport", "n": ""}, {"id": 510647511301120, "t": "e", "d": "2026-08-23", "a": 510.0, "c": "food", "n": "عصير لاكريم"}, {"id": 510649186689024, "t": "e", "d": "2026-08-23", "a": 250.0, "c": "food", "n": "ماء قديلة"}, {"id": 510792292064256, "t": "e", "d": "2026-08-24", "a": 150.0, "c": "food", "n": "كاجو"}, {"id": 510792212786176, "t": "e", "d": "2026-08-25", "a": 330.0, "c": "food", "n": "خبز"}, {"id": 510833520259072, "t": "e", "d": "2026-08-25", "a": 610.0, "c": "food", "n": "ياهورت شامبو"}, {"id": 510833541087232, "t": "i", "d": "2026-08-25", "a": 2500.0, "c": "other", "n": ""}, {"id": 510833547587584, "t": "e", "d": "2026-08-25", "a": 2000.0, "c": "food", "n": "شواء"}, {"id": 510972599912448, "t": "i", "d": "2026-08-26", "a": 1500.0, "c": "other", "n": ""}, {"id": 510880001099776, "t": "e", "d": "2026-08-26", "a": 1500.0, "c": "meat", "n": ""}, {"id": 510883077554176, "t": "e", "d": "2026-08-26", "a": 710.0, "c": "food", "n": "ماء عصير papier cuisson"}, {"id": 510882856046592, "t": "e", "d": "2026-08-26", "a": 350.0, "c": "food", "n": "تمر"}, {"id": 510883112994816, "t": "e", "d": "2026-08-26", "a": 630.0, "c": "food", "n": "فرماج ڨودا"}, {"id": 510972792444928, "t": "e", "d": "2026-08-27", "a": 275.0, "c": "meat", "n": "ملفوف شيش كباب"}, {"id": 510970851770368, "t": "e", "d": "2026-08-27", "a": 1120.0, "c": "food", "n": "بيسكويت لوز"}, {"id": 510970840164352, "t": "e", "d": "2026-08-27", "a": 400.0, "c": "food", "n": "زبدة"}, {"id": 510970828875776, "t": "e", "d": "2026-08-27", "a": 610.0, "c": "food", "n": "شكولا قهوة"}, {"id": 510970867227648, "t": "e", "d": "2026-08-27", "a": 450.0, "c": "food", "n": "جوز"}, {"id": 510971864631296, "t": "e", "d": "2026-08-27", "a": 95.0, "c": "food", "n": "بيض"}, {"id": 510972771663872, "t": "i", "d": "2026-08-27", "a": 3000.0, "c": "other", "n": "amina باش رحنا للبحر"}, {"id": 511056577912832, "t": "e", "d": "2026-08-27", "a": 1000.0, "c": "transport", "n": ""}, {"id": 511056636453888, "t": "i", "d": "2026-08-27", "a": 17000.0, "c": "other", "n": "امينة رجعتلي واش عطيتلهاا"}, {"id": 511056563336192, "t": "e", "d": "2026-08-28", "a": 1000.0, "c": "transport", "n": ""}, {"id": 511056848974848, "t": "e", "d": "2026-08-28", "a": 110.0, "c": "food", "n": "thon"}, {"id": 511056903283712, "t": "e", "d": "2026-08-28", "a": 400.0, "c": "food", "n": "بحرتها"}, {"id": 511149138716672, "t": "e", "d": "2026-08-29", "a": 410.0, "c": "food", "n": "عصير نشاف لطونوبيل"}, {"id": 511149167817728, "t": "e", "d": "2026-08-29", "a": 1300.0, "c": "car", "n": "contrôle technique تخص خمسين"}, {"id": 511181175162880, "t": "e", "d": "2026-08-29", "a": 260.0, "c": "food", "n": "أرز غاطو ارز"}, {"id": 511265647792128, "t": "e", "d": "2026-08-30", "a": 650.0, "c": "veg", "n": "نقل"}, {"id": 511718460953600, "t": "e", "d": "2026-09-01", "a": 4000.0, "c": "food", "n": "صباط"}, {"id": 511718469974016, "t": "e", "d": "2026-09-01", "a": 500.0, "c": "food", "n": "كابل"}, {"id": 511443417209856, "t": "e", "d": "2026-09-01", "a": 650.0, "c": "food", "n": ""}, {"id": 511720379601920, "t": "e", "d": "2026-09-02", "a": 1500.0, "c": "food", "n": "فرانامان"}, {"id": 511719096034304, "t": "e", "d": "2026-09-02", "a": 400.0, "c": "food", "n": "نسيت واش"}, {"id": 511718803841024, "t": "e", "d": "2026-09-03", "a": 380.0, "c": "food", "n": "خبز  تونة فطور"}, {"id": 511718583865344, "t": "e", "d": "2026-09-03", "a": 240.0, "c": "food", "n": "شاي لوز"}, {"id": 511718426397696, "t": "e", "d": "2026-09-03", "a": 2200.0, "c": "food", "n": "مشاوي"}, {"id": 511718445053952, "t": "e", "d": "2026-09-04", "a": 2200.0, "c": "food", "n": "مساوي"}, {"id": 511718819876864, "t": "e", "d": "2026-09-04", "a": 600.0, "c": "food", "n": "+ ماييس تونة"}, {"id": 511720366745600, "t": "i", "d": "2026-09-04", "a": 24000.0, "c": "other", "n": ""}, {"id": 511762746319872, "t": "e", "d": "2026-09-04", "a": 150.0, "c": "food", "n": "لاكريم ماء"}, {"id": 511767321046016, "t": "e", "d": "2026-09-05", "a": 1700.0, "c": "meat", "n": ""}, {"id": 511767384222720, "t": "e", "d": "2026-09-05", "a": 300.0, "c": "veg", "n": "باتحال قرعة جزر"}, {"id": 511767364927488, "t": "e", "d": "2026-09-05", "a": 200.0, "c": "food", "n": "تمر"}, {"id": 511767396268032, "t": "e", "d": "2026-09-05", "a": 200.0, "c": "veg", "n": "بطاطس"}, {"id": 511767405233152, "t": "e", "d": "2026-09-05", "a": 120.0, "c": "veg", "n": "بصل"}, {"id": 511767419955200, "t": "e", "d": "2026-09-05", "a": 150.0, "c": "veg", "n": "زيتون"}, {"id": 511767495478272, "t": "e", "d": "2026-09-05", "a": 50.0, "c": "veg", "n": "فلفل"}, {"id": 511767515195392, "t": "e", "d": "2026-09-05", "a": 60.0, "c": "transport", "n": "تيليفيريك"}, {"id": 511768581271552, "t": "e", "d": "2026-09-05", "a": 260.0, "c": "food", "n": "عصير"}, {"id": 511795366773760, "t": "e", "d": "2026-09-05", "a": 200.0, "c": "car", "n": "lampe de stopp"}, {"id": 511796236425216, "t": "e", "d": "2026-09-05", "a": 250.0, "c": "cheese", "n": "شيدار"}, {"id": 511802489264128, "t": "e", "d": "2026-09-05", "a": 240.0, "c": "nuts", "n": "شاي قهوة لوز"}, {"id": 511858170559488, "t": "e", "d": "2026-09-06", "a": 550.0, "c": "car", "n": "suit contrôle technique"}, {"id": 511882934049792, "t": "e", "d": "2026-09-06", "a": 40.0, "c": "nuts", "n": "qشاي"}, {"id": 511978362191872, "t": "e", "d": "2026-09-07", "a": 2600.0, "c": "car", "n": "جيلي extencteur"}, {"id": 511978380856320, "t": "e", "d": "2026-09-07", "a": 60.0, "c": "food", "n": "كسرة"}, {"id": 511978395603968, "t": "e", "d": "2026-09-07", "a": 560.0, "c": "cheese", "n": "روج غودا"}, {"id": 511978413925376, "t": "e", "d": "2026-09-07", "a": 210.0, "c": "veg", "n": "عنب"}, {"id": 511978436462592, "t": "e", "d": "2026-09-07", "a": 960.0, "c": "meat", "n": "كباب ملفوف"}, {"id": 511978456253440, "t": "e", "d": "2026-09-07", "a": 430.0, "c": "food", "n": "عصير ارز"}, {"id": 512025749945344, "t": "e", "d": "2026-09-08", "a": 1000.0, "c": "transport", "n": ""}, {"id": 512065877395456, "t": "e", "d": "2026-09-08", "a": 95.0, "c": "food", "n": "سكر"}, {"id": 512065871124480, "t": "e", "d": "2026-09-08", "a": 260.0, "c": "food", "n": "عصير"}, {"id": 512072989851648, "t": "e", "d": "2026-09-08", "a": 310.0, "c": "veg", "n": "بطاطا"}, {"id": 512073116599296, "t": "e", "d": "2026-09-08", "a": 320.0, "c": "food", "n": "خبز كامل"}, {"id": 512243067523072, "t": "e", "d": "2026-09-09", "a": 8750.0, "c": "car", "n": "assurance"}, {"id": 512243103387648, "t": "e", "d": "2026-09-10", "a": 700.0, "c": "food", "n": "برغر"}, {"id": 512243121630208, "t": "e", "d": "2026-09-10", "a": 150.0, "c": "food", "n": "عصير"}, {"id": 513003058387968, "t": "e", "d": "2026-09-11", "a": 1000.0, "c": "food", "n": "نسيت واش شريت او واش من نهار"}, {"id": 512602295975936, "t": "i", "d": "2026-09-11", "a": 5000.0, "c": "other", "n": ""}, {"id": 512432850742272, "t": "e", "d": "2026-09-12", "a": 600.0, "c": "food", "n": "عصير فستق للبنات"}, {"id": 512432837033984, "t": "e", "d": "2026-09-13", "a": 860.0, "c": "food", "n": "ماء تونة فروماج"}, {"id": 512600179420160, "t": "e", "d": "2026-09-14", "a": 280.0, "c": "food", "n": "خبز و تاع امينة"}, {"id": 512600173907968, "t": "e", "d": "2026-09-14", "a": 1000.0, "c": "food", "n": "عشاء"}, {"id": 512601562065920, "t": "e", "d": "2026-09-14", "a": 130.0, "c": "veg", "n": ""}, {"id": 512662078645248, "t": "e", "d": "2026-09-15", "a": 525.0, "c": "food", "n": "زيت +خبز"}, {"id": 513003009586176, "t": "e", "d": "2026-09-16", "a": 1000.0, "c": "transport", "n": ""}, {"id": 512761436872704, "t": "e", "d": "2026-09-16", "a": 1000.0, "c": "food", "n": ""}, {"id": 512786807219200, "t": "e", "d": "2026-09-16", "a": 500.0, "c": "food", "n": "لاكريم"}, {"id": 512868421984256, "t": "e", "d": "2026-09-17", "a": 290.0, "c": "veg", "n": ""}, {"id": 512868537615360, "t": "e", "d": "2026-09-17", "a": 260.0, "c": "cheese", "n": ""}, {"id": 513002984662016, "t": "e", "d": "2026-09-18", "a": 230.0, "c": "food", "n": "ماء"}, {"id": 513130286727168, "t": "e", "d": "2026-09-19", "a": 280.0, "c": "food", "n": "عصير شكوبا"}, {"id": 513130227092480, "t": "i", "d": "2026-09-20", "a": 20000.0, "c": "other", "n": ""}, {"id": 513130233127936, "t": "e", "d": "2026-09-20", "a": 1000.0, "c": "transport", "n": ""}, {"id": 513130237480960, "t": "e", "d": "2026-09-20", "a": 3450.0, "c": "food", "n": ""}, {"id": 513205102856192, "t": "e", "d": "2026-09-21", "a": 1850.0, "c": "meat", "n": ""}, {"id": 513377477389312, "t": "e", "d": "2026-09-21", "a": 380.0, "c": "food", "n": "كرام فراش عصير"}, {"id": 513297545008128, "t": "e", "d": "2026-09-22", "a": 670.0, "c": "fruit", "n": "بطاطا تمر عنب"}, {"id": 513377405530112, "t": "e", "d": "2026-09-23", "a": 120.0, "c": "food", "n": "لاكريم"}, {"id": 513533666262016, "t": "e", "d": "2026-09-24", "a": 130.0, "c": "food", "n": "عصير"}, {"id": 513530628664320, "t": "e", "d": "2026-09-25", "a": 2250.0, "c": "meat", "n": ""}, {"id": 513531577545728, "t": "e", "d": "2026-09-25", "a": 600.0, "c": "meat", "n": ""}, {"id": 513533484420096, "t": "e", "d": "2026-09-25", "a": 250.0, "c": "meat", "n": "سردين"}, {"id": 513533428731904, "t": "e", "d": "2026-09-25", "a": 250.0, "c": "veg", "n": "باتنجال طماطم"}, {"id": 513533454617600, "t": "e", "d": "2026-09-25", "a": 130.0, "c": "veg", "n": "جزر قرعة"}, {"id": 513533516252160, "t": "e", "d": "2026-09-25", "a": 100.0, "c": "veg", "n": "ثوم"}, {"id": 513533505411072, "t": "e", "d": "2026-09-25", "a": 60.0, "c": "veg", "n": "حشاوشش"}, {"id": 513533526990848, "t": "e", "d": "2026-09-25", "a": 150.0, "c": "food", "n": "خبز"}, {"id": 513533549757440, "t": "e", "d": "2026-09-25", "a": 60.0, "c": "transport", "n": "bus"}, {"id": 513533573309440, "t": "e", "d": "2026-09-25", "a": 100.0, "c": "veg", "n": "بصل"}, {"id": 513567859893248, "t": "e", "d": "2026-09-25", "a": 160.0, "c": "nuts", "n": ""}, {"id": 513567878212608, "t": "e", "d": "2026-09-25", "a": 510.0, "c": "food", "n": "عصير طماطم كبيرو صغيرة"}, {"id": 513622308833280, "t": "e", "d": "2026-09-26", "a": 1240.0, "c": "clean", "n": "جاغيل صانيبون ايزيس معطر"}, {"id": 513659905310720, "t": "e", "d": "2026-09-26", "a": 150.0, "c": "food", "n": "خبز توست"}, {"id": 513659927498752, "t": "e", "d": "2026-09-26", "a": 500.0, "c": "clean", "n": "حفاف"}, {"id": 513783246797824, "t": "e", "d": "2026-09-27", "a": 70.0, "c": "nuts", "n": "شاي كاوكاو"}, {"id": 513917526990848, "t": "e", "d": "2026-09-27", "a": 650.0, "c": "food", "n": "ماء ارز"}, {"id": 513917403077632, "t": "e", "d": "2026-09-29", "a": 450.0, "c": "veg", "n": "بطاكس عنب"}, {"id": 513917418878976, "t": "e", "d": "2026-09-29", "a": 120.0, "c": "nuts", "n": ""}, {"id": 513917429966848, "t": "e", "d": "2026-09-29", "a": 250.0, "c": "veg", "n": "ماء"}, {"id": 514047852832768, "t": "i", "d": "2026-09-30", "a": 4000.0, "c": "other", "n": ""}, {"id": 514090282571776, "t": "e", "d": "2026-10-01", "a": 250.0, "c": "nuts", "n": ""}, {"id": 514090295511040, "t": "e", "d": "2026-10-01", "a": 200.0, "c": "fruit", "n": "رمان"}, {"id": 514769434807296, "t": "e", "d": "2026-10-01", "a": 1570.0, "c": "meat", "n": "كبد"}, {"id": 514095611932672, "t": "e", "d": "2026-10-01", "a": 320.0, "c": "food", "n": "عصير هريسة"}, {"id": 514095623731200, "t": "e", "d": "2026-10-01", "a": 320.0, "c": "food", "n": "دواء"}, {"id": 514188873831424, "t": "e", "d": "2026-10-02", "a": 150.0, "c": "nuts", "n": "شاي لوز"}, {"id": 514188891245568, "t": "e", "d": "2026-10-02", "a": 500.0, "c": "transport", "n": ""}, {"id": 514279905362944, "t": "e", "d": "2026-10-02", "a": 1100.0, "c": "food", "n": "les epice"}, {"id": 514188938144768, "t": "e", "d": "2026-10-02", "a": 200.0, "c": "tea", "n": "شاي قهوة"}, {"id": 514189021151232, "t": "e", "d": "2026-10-02", "a": 50.0, "c": "nuts", "n": "حلوى"}, {"id": 514769142440960, "t": "i", "d": "2026-10-02", "a": 4600.0, "c": "other", "n": "5500 ماء كهرياء شريت منهم كراريس"}, {"id": 514279821020160, "t": "e", "d": "2026-10-03", "a": 8350.0, "c": "food", "n": ""}, {"id": 514279849637888, "t": "e", "d": "2026-10-03", "a": 1000.0, "c": "meat", "n": "لحم مفروم"}, {"id": 514279932175360, "t": "e", "d": "2026-10-03", "a": 260.0, "c": "food", "n": "ماء بسباسة"}, {"id": 514626824438784, "t": "i", "d": "2026-10-04", "a": 8000.0, "c": "other", "n": ""}, {"id": 514769403870208, "t": "e", "d": "2026-10-04", "a": 1000.0, "c": "meat", "n": "فيونداشي  لحم"}, {"id": 514350984591360, "t": "e", "d": "2026-10-04", "a": 210.0, "c": "meat", "n": "شيش كباب"}, {"id": 514351043803136, "t": "e", "d": "2026-10-04", "a": 300.0, "c": "veg", "n": "بطاطس"}, {"id": 514351064406016, "t": "e", "d": "2026-10-04", "a": 40.0, "c": "tea", "n": "شاي"}, {"id": 514511297158144, "t": "e", "d": "2026-10-06", "a": 100.0, "c": "food", "n": "زيتون"}, {"id": 514511308589056, "t": "e", "d": "2026-10-06", "a": 30.0, "c": "food", "n": "نعناع"}, {"id": 514511330365440, "t": "e", "d": "2026-10-06", "a": 1500.0, "c": "meat", "n": "لحم"}, {"id": 514535310290944, "t": "e", "d": "2026-10-06", "a": 290.0, "c": "food", "n": "عصير ماء"}, {"id": 514625672146944, "t": "e", "d": "2026-10-06", "a": 200.0, "c": "fruit", "n": "عنب رمان حبة"}, {"id": 514625665090560, "t": "e", "d": "2026-10-06", "a": 200.0, "c": "fruit", "n": "رمان حبتين"}, {"id": 515375325371392, "t": "e", "d": "2026-10-07", "a": 1290.0, "c": "food", "n": "لوز جوز"}, {"id": 514622828034048, "t": "e", "d": "2026-10-07", "a": 630.0, "c": "veg", "n": ""}, {"id": 515374105147392, "t": "i", "d": "2026-10-08", "a": 10000.0, "c": "other", "n": ""}, {"id": 514722493347840, "t": "e", "d": "2026-10-08", "a": 80.0, "c": "food", "n": "لاكريم"}, {"id": 514722515529728, "t": "e", "d": "2026-10-08", "a": 1100.0, "c": "transport", "n": "essence"}, {"id": 514722562072576, "t": "e", "d": "2026-10-08", "a": 50.0, "c": "tea", "n": ""}, {"id": 514780868719616, "t": "e", "d": "2026-10-09", "a": 220.0, "c": "meat", "n": "تونة"}, {"id": 514811320092672, "t": "e", "d": "2026-10-09", "a": 140.0, "c": "nuts", "n": "لوز شاي"}, {"id": 514886248786944, "t": "e", "d": "2026-10-10", "a": 1700.0, "c": "meat", "n": "حوت"}, {"id": 514861445388288, "t": "e", "d": "2026-10-10", "a": 400.0, "c": "veg", "n": "بطاطا"}, {"id": 515374263997440, "t": "e", "d": "2026-10-10", "a": 100.0, "c": "veg", "n": "طماطم"}, {"id": 514861398372352, "t": "e", "d": "2026-10-10", "a": 100.0, "c": "veg", "n": "فلفل"}, {"id": 514861382465536, "t": "e", "d": "2026-10-10", "a": 150.0, "c": "veg", "n": "ماشطو"}, {"id": 514861411518464, "t": "e", "d": "2026-10-10", "a": 100.0, "c": "veg", "n": "بصل"}, {"id": 514862089867264, "t": "e", "d": "2026-10-10", "a": 1300.0, "c": "meat", "n": ""}, {"id": 514862716664832, "t": "e", "d": "2026-10-10", "a": 210.0, "c": "meat", "n": ""}, {"id": 514862725974016, "t": "e", "d": "2026-10-10", "a": 60.0, "c": "food", "n": ""}, {"id": 514862775772160, "t": "e", "d": "2026-10-10", "a": 180.0, "c": "fruit", "n": ""}, {"id": 514862781075456, "t": "e", "d": "2026-10-10", "a": 300.0, "c": "fruit", "n": ""}, {"id": 514886107671552, "t": "e", "d": "2026-10-10", "a": 610.0, "c": "food", "n": "ماء عصير خبز كامل"}, {"id": 514982044747776, "t": "e", "d": "2026-10-11", "a": 530.0, "c": "food", "n": "تونة مايونيز  فرماج"}, {"id": 515158591570944, "t": "e", "d": "2026-10-13", "a": 130.0, "c": "nuts", "n": ""}, {"id": 515158598602752, "t": "e", "d": "2026-10-13", "a": 250.0, "c": "food", "n": "ماء"}, {"id": 515158614648832, "t": "e", "d": "2026-10-13", "a": 200.0, "c": "veg", "n": "نعناع زرودية"}, {"id": 515158664810496, "t": "e", "d": "2026-10-13", "a": 600.0, "c": "food", "n": "ماء"}, {"id": 515232350275584, "t": "e", "d": "2026-10-14", "a": 140.0, "c": "tea", "n": ""}, {"id": 515251669143552, "t": "e", "d": "2026-10-14", "a": 480.0, "c": "food", "n": "دواء"}, {"id": 515392117003264, "t": "e", "d": "2026-10-16", "a": 550.0, "c": "food", "n": ""}, {"id": 515431707216896, "t": "e", "d": "2026-10-16", "a": 300.0, "c": "food", "n": "كاجو ماء عصير"}, {"id": 515498214893568, "t": "e", "d": "2026-10-16", "a": 500.0, "c": "food", "n": "cable"}, {"id": 515600678735872, "t": "i", "d": "2026-10-16", "a": 6500.0, "c": "other", "n": "انترنت ابي"}, {"id": 515498132843520, "t": "e", "d": "2026-10-16", "a": 1000.0, "c": "transport", "n": ""}, {"id": 515498155327488, "t": "e", "d": "2026-10-17", "a": 500.0, "c": "food", "n": "ملفاي"}, {"id": 515512010014720, "t": "e", "d": "2026-10-17", "a": 1300.0, "c": "cheese", "n": "fromage"}, {"id": 515601835252736, "t": "e", "d": "2026-10-17", "a": 250.0, "c": "food", "n": "ماء"}, {"id": 515599230038016, "t": "e", "d": "2026-10-18", "a": 210.0, "c": "food", "n": "creme freche"}, {"id": 515661251297280, "t": "e", "d": "2026-10-19", "a": 540.0, "c": "veg", "n": ""}, {"id": 515661261978624, "t": "e", "d": "2026-10-19", "a": 1500.0, "c": "meat", "n": "لحم"}, {"id": 515661281925120, "t": "e", "d": "2026-10-19", "a": 130.0, "c": "veg", "n": "زيتون اسود معدنوس"}, {"id": 515672934145024, "t": "e", "d": "2026-10-19", "a": 200.0, "c": "food", "n": "jus"}, {"id": 515678448715776, "t": "e", "d": "2026-10-19", "a": 170.0, "c": "veg", "n": "شاي مكسرات"}, {"id": 515772877222912, "t": "e", "d": "2026-10-20", "a": 700.0, "c": "fruit", "n": "تفاح اجاص رمان قارس خوخ"}, {"id": 515772903576576, "t": "e", "d": "2026-10-20", "a": 40.0, "c": "tea", "n": ""}, {"id": 515783566531584, "t": "e", "d": "2026-10-20", "a": 500.0, "c": "food", "n": "رولو تورشون"}, {"id": 515866491357184, "t": "i", "d": "2026-10-20", "a": 8000.0, "c": "other", "n": ""}, {"id": 515866466760704, "t": "e", "d": "2026-10-21", "a": 400.0, "c": "food", "n": "ماء بيسكويت كامل"}, {"id": 515921813639168, "t": "e", "d": "2026-10-22", "a": 1065.0, "c": "food", "n": "منظف ملابس bingo رازوار"}, {"id": 516112690336768, "t": "e", "d": "2026-10-22", "a": 1000.0, "c": "transport", "n": ""}, {"id": 516047146251264, "t": "e", "d": "2026-10-23", "a": 120.0, "c": "food", "n": ""}, {"id": 516047151972352, "t": "e", "d": "2026-10-23", "a": 230.0, "c": "tea", "n": ""}, {"id": 516050063007744, "t": "e", "d": "2026-10-23", "a": 180.0, "c": "food", "n": "خبز توست"}, {"id": 516219556149248, "t": "e", "d": "2026-10-25", "a": 500.0, "c": "clean", "n": "حلاقة"}, {"id": 516219568570368, "t": "e", "d": "2026-10-25", "a": 40.0, "c": "food", "n": "شاي"}, {"id": 516305311029248, "t": "e", "d": "2026-10-26", "a": 300.0, "c": "food", "n": "قهوة"}, {"id": 516305288470528, "t": "e", "d": "2026-10-26", "a": 140.0, "c": "tea", "n": ""}, {"id": 516305299061760, "t": "e", "d": "2026-10-26", "a": 290.0, "c": "nuts", "n": "كراريس"}, {"id": 516305320642560, "t": "e", "d": "2026-10-26", "a": 280.0, "c": "food", "n": "فرماج مقارون"}, {"id": 516306592529408, "t": "e", "d": "2026-10-26", "a": 200.0, "c": "veg", "n": "بطاطا"}, {"id": 516447763167232, "t": "e", "d": "2026-10-27", "a": 500.0, "c": "food", "n": "عشااء برا"}, {"id": 516450522050560, "t": "e", "d": "2026-10-28", "a": 2000.0, "c": "meat", "n": "فيونداشي و لحم طرونش"}, {"id": 516450546939904, "t": "e", "d": "2026-10-28", "a": 160.0, "c": "veg", "n": "خضر"}, {"id": 516450569083904, "t": "e", "d": "2026-10-28", "a": 100.0, "c": "veg", "n": "نعناع زيتون"}, {"id": 516486202626048, "t": "e", "d": "2026-10-28", "a": 120.0, "c": "food", "n": "شيبس"}, {"id": 516782982701056, "t": "e", "d": "2026-10-28", "a": 1100.0, "c": "food", "n": "فرماج"}, {"id": 516624950517760, "t": "i", "d": "2026-10-28", "a": 1000.0, "c": "other", "n": "مساعدة امينة"}, {"id": 516625041494016, "t": "e", "d": "2026-10-29", "a": 1000.0, "c": "transport", "n": ""}, {"id": 516625085499392, "t": "e", "d": "2026-10-29", "a": 550.0, "c": "food", "n": "غاطو ارز خبز حلوة بنات"}, {"id": 516783355926528, "t": "i", "d": "2026-11-01", "a": 6000.0, "c": "other", "n": "29 jbedthom octobre ktebtha 1 novembre"}];
+          __MASROUF_EOF__
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null || true
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masrouf-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
